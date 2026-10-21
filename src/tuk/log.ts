@@ -42,6 +42,9 @@ export const COLUMNS = [
   "Error",
   "Output path",
   "Logged at",
+  // Review: the part of the clip to use, in seconds (set with flow_mark or the review board).
+  "In (s)",
+  "Out (s)",
 ] as const;
 
 export type Row = Record<(typeof COLUMNS)[number], string>;

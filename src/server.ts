@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { HOME_DIR } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
+import { tukRoute } from "./tuk/board.js";
 
 export const PORT = Number(process.env.FLOW_MCP_PORT ?? 8787);
 export const TOKEN_FILE = join(HOME_DIR, "token");
@@ -83,6 +84,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
       if (given !== token) return json(res, 401, { error: "Missing or wrong token." });
 
       if (req.method === "GET" && url.pathname === "/media") return sendMedia(req, res, url.searchParams.get("path") ?? "");
+      // TUK review board (/tuk/...), behind the same token.
+      if (await tukRoute(req, res, url, token)) return;
 
       if (req.method === "POST" && url.pathname === "/api/upload") {
         const name = basename(url.searchParams.get("name") ?? "upload").replace(/[^\w.-]+/g, "_");

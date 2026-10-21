@@ -297,6 +297,6 @@ server.registerTool(
 );
 
 // TUK: flow_mark, flow_promote, flow_log.
-registerTukTools(server, core, reply);
+registerTukTools(server, core, reply, patient);
 
 await server.connect(new StdioServerTransport());

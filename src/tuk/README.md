@@ -8,7 +8,8 @@ Channel-specific additions to flow-mcp. They live here so `git merge upstream/ma
 |---|---|
 | `core.ts` | `...tukSceneFields` in the scene schema; `prepareShots()` at the top of `generate`; the queue runner logs every job with `logJob()`; `flow_download` takes optional `names` |
 | `flow.ts` | `runGeneration` names each output from `variant_stems` (disk and Flow title) |
-| `index.ts` | `registerTukTools()` adds `flow_mark`, `flow_promote`, `flow_log` |
+| `index.ts` | `registerTukTools()` adds `flow_mark`, `flow_promote`, `flow_review`, `flow_log` |
+| `server.ts` | `tukRoute()` serves the review board under `/tuk/`, behind the Studio token |
 
 ## Shot naming
 
@@ -38,3 +39,12 @@ Warnings (not blocking):
 - Readouts written into the prompt.
 - No last frame.
 - Gear named in an image prompt.
+
+## Review board
+
+`flow_review` screens each downloaded output with ffmpeg. It takes a thumbnail every 0.5 s and checks for:
+- something entering at a frame edge
+- the whole frame moving (camera drift or zoom)
+- exposure shifts
+
+It also reports the longest clean stretch, and returns a link to the board (`/tuk/review` on the Studio server). On the board you mark each output Keep, Draft or Reject (Reject needs a QC reason) and set the in and out points; the board writes them to the log. The checks were calibrated on TST_SH01_v01_F (an arm entering from frame left at 0.5–2.0 s): they show where to look, and the decision is still yours. Needs ffmpeg on the PATH (or `FLOW_MCP_FFMPEG`).
