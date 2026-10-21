@@ -9,6 +9,10 @@ import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacte
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
+// TUK (The Unreasonable Kitchen) additions live in src/tuk; these are the only hooks into this file.
+import { tukSceneFields, type TukScene } from "./tuk/fields.js";
+import { logJob } from "./tuk/log.js";
+import { prepareShots } from "./tuk/shots.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
 const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
@@ -47,6 +51,7 @@ const sceneSchema = z.object({
     .boolean()
     .optional()
     .describe("Continue the previous scene in this call: its last frame becomes this scene's first frame. Not valid on the first scene or together with first_frame."),
+  ...tukSceneFields,
 });
 
 // Raw shapes double as MCP input schemas and, wrapped in z.object, as HTTP body validators.
@@ -67,6 +72,7 @@ export const shapes = {
     project: z.string().min(1).describe("Local folder name under the output root."),
     assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
     quality: z.enum(["original", "upscaled"]).default("original"),
+    names: z.array(z.string().min(1)).optional().describe("File stems to save under, in the same order as assets (e.g. 'EP00_SH012_v03_F'). Default: clip-NN."),
   },
   assemble: {
     project: z.string().min(1).describe("Same project name used in flow_generate."),
@@ -244,6 +250,20 @@ const BUSY = "A generation is running in the Flow tab. Wait for it to finish (fl
 
 export class LocalCore implements Core {
   private queue: JobQueue = new JobQueue(async (job) => {
+    // TUK: every finished or failed job is written to the project's generation-log.csv.
+    try {
+      const files = await this.run(job);
+      const warn = logJob({ ...job, status: "done", files });
+      if (warn) job.note = [job.note, warn].filter(Boolean).join(" · ");
+      return files;
+    } catch (err) {
+      const warn = logJob({ ...job, status: "failed", error: err instanceof Error ? err.message : String(err) });
+      if (warn) job.note = [job.note, warn].filter(Boolean).join(" · ");
+      throw err;
+    }
+  });
+
+  private async run(job: Job): Promise<string[]> {
     const { chain_from, reference_from } = job.params;
     if (reference_from) {
       const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
@@ -259,7 +279,7 @@ export class LocalCore implements Core {
     if (job.params.agent_scenes) return runAgentBatch(job);
     if (job.params.edit_asset) return runEdit(job);
     return runGeneration(job);
-  });
+  }
 
   async status({ detailed }: Args<"status">) {
     const flow = await getFlowState(detailed && !this.queue.busy);
@@ -277,6 +297,8 @@ export class LocalCore implements Core {
     if (unknown) throw new Error(`Unknown technique "${unknown.technique}". Call flow_techniques for valid ids.`);
 
     const output_dir = projectDir(project);
+    // TUK: names channel shots and refuses the whole call if any shot breaks a guard rail, before anything is queued.
+    const tuk = prepareShots(scenes as TukScene[], output_dir, this.queue.list());
     // Continue numbering after whatever is already on disk or queued, so reruns never overwrite earlier scenes.
     const onDisk = existsSync(output_dir) ? readdirSync(output_dir).map((f) => Number(f.match(/^scene-(\d+)/)?.[1] ?? 0)) : [];
     const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir).map((j) => Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0));
@@ -305,11 +327,12 @@ export class LocalCore implements Core {
           chain_from: chain_previous ? jobs[i - 1].id : undefined,
           reference_from: reference_previous ? jobs[i - 1].id : undefined,
           output_dir,
-          file_stem: `scene-${String(offset + i + 1).padStart(2, "0")}`,
+          file_stem: tuk.plans[i]?.variant_stems[0] ?? `scene-${String(offset + i + 1).padStart(2, "0")}`,
+          ...(tuk.plans[i] ?? {}),
         }),
       );
     }
-    return { output_dir, jobs: jobs.map(jobView) };
+    return { output_dir, jobs: jobs.map(jobView), ...(tuk.warnings.length ? { preflight_warnings: tuk.warnings } : {}) };
   }
 
   async wait({ job_ids, timeout_seconds }: Args<"wait">) {
@@ -368,7 +391,8 @@ export class LocalCore implements Core {
     return (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
   }
 
-  async download({ project, assets, quality }: Args<"download">) {
+  async download({ project, assets, quality, names }: Args<"download">) {
+    if (names && names.length !== assets.length) throw new Error("names must list one file stem per asset, in the same order.");
     if (this.queue.busy) throw new Error(BUSY);
     const dir = projectDir(project);
     mkdirSync(dir, { recursive: true });
@@ -376,9 +400,9 @@ export class LocalCore implements Core {
     // Numbering from 1 every call overwrote clips fetched earlier - it destroyed a finished shot once. Carry on from
     // the highest clip-NN already on disk instead.
     let next = Math.max(0, ...readdirSync(dir).map((f) => Number(f.match(/^clip-(\d+)/)?.[1] ?? 0))) + 1;
-    for (const name of assets) {
+    for (const [i, name] of assets.entries()) {
       try {
-        files.push(...(await downloadAsset(name, join(dir, `clip-${String(next++).padStart(2, "0")}`), quality)));
+        files.push(...(await downloadAsset(name, join(dir, names?.[i] ?? `clip-${String(next++).padStart(2, "0")}`), quality)));
       } catch (err) {
         throw new Error(`${err instanceof Error ? err.message : err} (downloaded so far: ${files.length})`);
       }

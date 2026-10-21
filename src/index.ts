@@ -6,6 +6,7 @@ import { LocalCore, shapes, type Core } from "./core.js";
 import { PLAYBOOK } from "./playbook.js";
 import { RemoteCore } from "./remote.js";
 import { PORT, startServer } from "./server.js";
+import { registerTukTools } from "./tuk/tools.js";
 
 const local = new LocalCore();
 const role = await startServer(local);
@@ -294,5 +295,8 @@ server.registerTool(
   },
   (args) => reply(patient("flow_assemble", core.assemble(args))),
 );
+
+// TUK: flow_mark, flow_promote, flow_log.
+registerTukTools(server, core, reply);
 
 await server.connect(new StdioServerTransport());

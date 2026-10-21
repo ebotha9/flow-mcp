@@ -842,12 +842,14 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const files: string[] = [];
   const failed: string[] = [];
   let firstError: unknown;
+  // TUK shots name each output themselves (EP00_SH012_v03_F, v04_F...), the same on disk and in Flow.
+  const shotStems = (s as { variant_stems?: string[] }).variant_stems;
   for (const [i, id] of fresh.entries()) {
-    const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
+    const label = shotStems?.[i] ?? (fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem);
     // Flow names clips itself and reuses those names, so two takes of one scene come back identically titled and
     // neither can be found by name afterwards. Renaming each finished tile to the scene's own file stem makes every
     // later lookup - download, continue, assemble - unambiguous. Best effort: a failed rename must not lose the clip.
-    const newTitle = `${basename(s.output_dir)}-${label}`;
+    const newTitle = shotStems?.[i] ?? `${basename(s.output_dir)}-${label}`;
     const renamed = await renameTile(page, mediaTile(page, id), newTitle).catch(() => false);
     if (renamed) job.note = [job.note, `renamed in Flow to ${newTitle}`].filter(Boolean).join(" · ");
     await pause(page, 800);
