@@ -474,7 +474,7 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
   await pause(page, 500);
 }
 
-export type DownloadQuality = "original" | "upscaled";
+export type DownloadQuality = "original" | "upscaled" | "4k";
 
 export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string[]> {
   // A tile that has just finished rendering is still settling and the grid re-renders around it, so give it a moment.
@@ -680,11 +680,24 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
           .filter({ hasText: /upscaled/i })
           .filter({ hasText: FREE_UPSCALE })
           .first();
-        const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
-        await wanted.click();
+        if (quality === "4k") {
+          // 4K is only taken when explicitly asked for (masters and start frames); it is never a silent fallback.
+          const fourK = page
+            .locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])')
+            .filter({ hasText: /\b4K\b/i })
+            .first();
+          if (!(await fourK.isVisible().catch(() => false))) {
+            const items = await page.locator('[role="menuitem"]').evaluateAll((ms) => ms.map((m) => (m.textContent ?? "").replace(/\s+/g, " ").trim()));
+            throw new Error(`Flow offers no 4K download for this tile. It offered: ${items.join(" | ")}`);
+          }
+          await fourK.click();
+        } else {
+          const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
+          await wanted.click();
+        }
       }
       // Upscales are rendered on demand, so they can take minutes to appear.
-      file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
+      file = await waitForDownloadedFile(page, before, quality === "original" ? 180_000 : 600_000);
       await page.keyboard.press("Escape");
       await scrollToTop(page);
     } catch (err) {

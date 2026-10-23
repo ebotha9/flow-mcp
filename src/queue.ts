@@ -25,7 +25,7 @@ export interface SceneParams {
   attach?: string[];
   continue_mode?: "exact" | "likeness";
   retries?: number;
-  download_quality?: "original" | "upscaled";
+  download_quality?: "original" | "upscaled" | "4k";
   output_dir: string;
   file_stem: string;
 }

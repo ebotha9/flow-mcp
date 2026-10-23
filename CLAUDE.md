@@ -432,3 +432,8 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   a 250 ms hover then a wait for the More options button itself (locator.isVisible({ timeout }) does NOT wait - it
   answers at once), 250 ms polling, and each download held to a random 4-4.4 s (downloadPace). Measured on 6 images:
   4.2, 4.1, 4.2, 4.0, 4.4, 4.4 s, all 1024x1024 originals in scene order. Other hoverTile callers keep 900 ms.
+- 4K DOWNLOADS (2026-10-23, TUK Set Bible v2: "4K downloads only" for masters and start frames). DownloadQuality gains
+  "4k": downloadTile picks the enabled tile-menu item whose text says 4K and FAILS with the menu's actual items if Flow
+  offers none - it never falls back to 2K or the original silently. Available on download_quality (flow_generate,
+  agent, edit, continue, promote) and flow_download quality. Not yet verified live: the first 4K image run checks that
+  the menu label matches /\b4K\b/ and that the file is 5504 x 3072.

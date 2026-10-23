@@ -31,7 +31,7 @@ export const tukShapes = {
     project: z.string().min(1).describe("Same project name used in flow_generate."),
     drafts: z.array(z.string().min(1)).min(1).max(50).describe("Stems of Fast drafts marked Keep, e.g. ['EP00_SH012_v03_F']."),
     max_credits: z.number().int().min(0).default(100).describe("Per shot; Veo 3.1 Quality quotes 100 on Ultra. A higher quote skips the shot."),
-    download_quality: z.enum(["original", "upscaled"]).default("upscaled").describe("Default: the free 1080p download."),
+    download_quality: z.enum(["original", "upscaled", "4k"]).default("upscaled").describe("Default: the free 1080p download."),
   },
   review: {
     project: z.string().min(1).describe("Same project name used in flow_generate."),

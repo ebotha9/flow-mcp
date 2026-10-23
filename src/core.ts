@@ -40,7 +40,7 @@ const sceneSchema = z.object({
     .describe(
       "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. Flow's COMPOSER takes references OR first/last frames on a video scene, never both, so with frames set these are skipped and the job says so. Flow itself can do both via agent mode (save the last frame, Animate it, then add the character).",
     ),
-  download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches the free 1080p video / 2K image upscale (slower; 4K is never picked). Default: upscaled for images, original for video."),
+  download_quality: z.enum(["original", "upscaled", "4k"]).optional().describe("'upscaled' fetches the free 1080p video / 2K image upscale (slower); '4k' fetches the 4K download and fails if Flow does not offer it (never picked unless asked). Default: upscaled for images, original for video."),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
   technique: z.string().optional().describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),
   reference_previous: z
@@ -71,7 +71,7 @@ export const shapes = {
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
     assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
-    quality: z.enum(["original", "upscaled"]).default("original"),
+    quality: z.enum(["original", "upscaled", "4k"]).default("original"),
     names: z.array(z.string().min(1)).optional().describe("File stems to save under, in the same order as assets (e.g. 'EP00_SH012_v03_F'). Default: clip-NN."),
   },
   assemble: {
@@ -93,7 +93,7 @@ export const shapes = {
     project: z.string().min(1).describe("Folder name for the downloaded images."),
     scenes: z.array(z.string().min(1)).min(1).max(50).describe("One image description per scene, in order."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("16:9"),
-    download_quality: z.enum(["original", "upscaled"]).optional(),
+    download_quality: z.enum(["original", "upscaled", "4k"]).optional(),
   },
   voices: {},
   narrate: {
@@ -115,7 +115,7 @@ export const shapes = {
     acknowledge_cost: z
       .literal(true)
       .describe("Must be true. Flow shows no quote for edits, so max_credits cannot protect you: a 4 s clip cost 20 credits when measured. The real cost is reported on the finished job."),
-    download_quality: z.enum(["original", "upscaled"]).optional(),
+    download_quality: z.enum(["original", "upscaled", "4k"]).optional(),
   },
   continue_shot: {
     project: z.string().min(1).describe("Local folder for the new clip."),
@@ -136,7 +136,7 @@ export const shapes = {
     acknowledge_cost: z
       .literal(true)
       .describe("Must be true. Agent mode shows no credit quote before it runs, so max_credits cannot protect you; the real cost is reported on the finished job."),
-    download_quality: z.enum(["original", "upscaled"]).optional(),
+    download_quality: z.enum(["original", "upscaled", "4k"]).optional(),
     force: z
       .boolean()
       .optional()
