@@ -13,7 +13,7 @@ Channel-specific additions to flow-mcp. They live here so `git merge upstream/ma
 
 ## Shot naming
 
-A scene with `shot_id: "EP00_SH012"` and an explicit model is saved as `EP00_SH012_v##_<F|Q|L|O|SF>`, the same name on disk and in Flow (folder-map naming rule). The version is the next free one. Each variant takes its own version. A Quality render reuses the version of the Fast draft it renders.
+A scene with `shot_id: "EP00_SH012"` and an explicit model is saved as `EP00_SH012_v##_<F|Q|L|O|SF>`, the same name on disk and in Flow (folder-map naming rule). The version is the next free one. Each variant takes its own version. A promote (`flow_promote`) reuses the version of the Fast draft it renders; a direct Quality render takes the next free video version.
 
 ## Generation log
 
@@ -28,8 +28,8 @@ Video shots:
 - The camera is held static, or there is a `camera_move` with a `last_frame`.
 - The prompt says "empty of people".
 - An explicit model is set.
-- No more than two Fast generations of the same start frame and prompt.
-- Quality only from a Fast draft marked Keep, with the same frames and prompt, and once per draft.
+- No more than two batches of 2 (4 samples) of the same start frame and prompt on one model.
+- Fast or Quality is the operator's choice: a shot can go straight to Quality, in batches of 2. A promote renders a kept Fast draft once.
 
 Start frames:
 - `reference_images` (a Set Bible master) are required.

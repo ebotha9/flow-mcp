@@ -59,8 +59,11 @@ const parseStem = (stem: string) => {
   return m ? { shot: m[1], version: Number(m[2]), suffix: m[3] as Suffix } : undefined;
 };
 
-// Drafts (F, L, O) share one version counter per shot; Q reuses the version of the Fast draft it renders; start frames count on their own.
-const sameCounter = (a: Suffix, b: Suffix) => (a === "SF" ? b === "SF" : b === "F" || b === "L" || b === "O");
+// Videos (F, L, O, Q) share one version counter per shot; a promote reuses the version of the Fast draft it renders; start frames count on their own.
+const sameCounter = (a: Suffix, b: Suffix) => (a === "SF" ? b === "SF" : b !== "SF");
+
+// Guard rail 7: two batches of 2 per shot design.
+const MAX_SAMPLES = 4;
 
 export interface TukPlan {
   version: number;
@@ -88,10 +91,11 @@ export function prepareShots(scenes: TukScene[], output_dir: string, queued: Job
     ...queued.flatMap((j) => (j.params as TukParams).variant_stems ?? []),
   ];
   // Drafts queued or planned with the same shot, start frame and prompt, for the retry budget.
-  const pending: { shot: string; frame: string; prompt: string; count: number }[] = queued
+  const pending: { shot: string; suffix?: Suffix; frame: string; prompt: string; count: number }[] = queued
     .filter((j) => (j.status === "queued" || j.status === "running") && (j.params as TukParams).shot_id)
     .map((j) => ({
       shot: (j.params as TukParams).shot_id!,
+      suffix: (j.params as TukParams).variant_stems?.[0] ? parseStem((j.params as TukParams).variant_stems![0])?.suffix : undefined,
       frame: normPath(j.params.first_frame),
       prompt: normPrompt((j.params as TukParams).prompt_as_written ?? j.params.prompt),
       count: (j.params as TukParams).variant_stems?.length ?? 1,
@@ -146,50 +150,46 @@ export function prepareShots(scenes: TukScene[], output_dir: string, queued: Job
     const sameInputs = (r: Row) => normPrompt(r["Prompt as written"]) === prompt && normPath(r["First frame path"]) === frame && normPath(r["Last frame path"]) === normPath(s.last_frame);
     let version: number;
 
-    if (suffix === "Q") {
-      // Guard rail 7: Quality only after the same start frame and prompt passed on Fast.
-      const kept = shotRows.filter((r) => parseStem(r.Stem)?.suffix === "F" && r.Status === "done" && r.Outcome === "Keep" && sameInputs(r));
-      const pick = s.version ? kept.find((r) => parseStem(r.Stem)?.version === s.version) : kept.sort((a, b) => parseStem(b.Stem)!.version - parseStem(a.Stem)!.version)[0];
-      if (!pick) {
-        fail(
-          `Quality needs a Fast draft of this shot${s.version ? ` (v${String(s.version).padStart(2, "0")})` : ""} marked Keep, with the same start frame, last frame and prompt. ` +
-            (shotRows.length ? `Logged for this shot: ${fmt(shotRows)}.` : "Nothing is logged for this shot yet.") +
-            " Mark the draft with flow_mark, or use flow_promote.",
-        );
-        plans.push(undefined);
-        continue;
-      }
-      version = parseStem(pick.Stem)!.version;
-      if (variants > 1) fail("Quality renders one output per shot (100 credits each): set variants to 1.");
+    // A promote (flow_promote) renders a kept draft in Quality under the draft's own version number.
+    const promoteOf =
+      suffix === "Q" && s.version
+        ? shotRows.find(
+            (r) => parseStem(r.Stem)?.suffix === "F" && parseStem(r.Stem)?.version === s.version && r.Status === "done" && r.Outcome === "Keep" && sameInputs(r),
+          )
+        : undefined;
+    if (promoteOf) {
+      version = s.version!;
       const stem = stemOf(s.shot_id, version, "Q");
       const rendered = log.some((r) => r.Stem === stem && r.Status === "done") || queued.some((j) => (j.status === "queued" || j.status === "running") && (j.params as TukParams).variant_stems?.includes(stem));
       if (rendered) fail(`${stem} already exists or is queued. A second Quality render of the same draft spends 100 credits for the same shot.`);
+      if (variants > 1) fail("a promote renders the kept draft once: set variants to 1.");
     } else {
+      // Fast or Quality is the operator's call (Elmer, 23 Oct 2026): a shot may go straight to Quality, no Fast draft needed.
       if (s.version) version = s.version;
       else {
         const used = taken.map(parseStem).filter((p) => p && p.shot === s.shot_id && sameCounter(suffix, p.suffix)).map((p) => p!.version);
         version = Math.max(0, ...used) + 1;
       }
-      if (suffix === "F" || suffix === "L" || suffix === "O") {
-        // Guard rail 7: at most two Fast generations per shot design (same start frame and prompt).
+      if (suffix !== "SF") {
+        // Guard rail 7: at most two batches of 2 (4 samples) per shot design and model (same frames and prompt).
         const tried = shotRows.filter((r) => parseStem(r.Stem)?.suffix === suffix && r.Status === "done" && sameInputs(r));
         const keep = tried.find((r) => r.Outcome === "Keep");
-        const inFlight = pending.filter((p) => p.shot === s.shot_id && p.frame === frame && p.prompt === prompt).reduce((n, p) => n + p.count, 0);
+        const inFlight = pending.filter((p) => p.shot === s.shot_id && p.suffix === suffix && p.frame === frame && p.prompt === prompt).reduce((n, p) => n + p.count, 0);
         const total = tried.length + inFlight + variants;
         if (keep) warn(`${keep.Stem} is already marked Keep with these inputs; this spends more on a shot that has passed.`);
-        else if (total > 2)
+        else if (total > MAX_SAMPLES)
           fail(
-            `retry budget: this would be generation ${total} of the same start frame and prompt (${tried.length} logged${inFlight ? `, ${inFlight} queued` : ""}). ` +
-              "Two Fast tries is the limit: redesign the shot (scale, angle, length, partial frame, or move the motion into the edit) before spending more.",
+            `retry budget: this would be sample ${total} of the same start frame and prompt on this model (${tried.length} logged${inFlight ? `, ${inFlight} queued` : ""}). ` +
+              "Two batches of 2 is the limit: redesign the shot (scale, angle, length, partial frame, or move the motion into the edit) before spending more.",
           );
       }
     }
 
-    const stems = Array.from({ length: suffix === "Q" ? 1 : variants }, (_, k) => stemOf(s.shot_id!, version + k, suffix));
+    const stems = Array.from({ length: promoteOf ? 1 : variants }, (_, k) => stemOf(s.shot_id!, version + k, suffix));
     const clash = stems.filter((st) => taken.includes(st));
-    if (clash.length && suffix !== "Q") fail(`${clash.join(", ")} already exists or is queued; leave version out to take the next free one.`);
+    if (clash.length && !promoteOf) fail(`${clash.join(", ")} already exists or is queued; leave version out to take the next free one.`);
     taken.push(...stems);
-    if (suffix !== "Q" && suffix !== "SF") pending.push({ shot: s.shot_id, frame, prompt, count: stems.length });
+    if (!promoteOf && suffix !== "SF") pending.push({ shot: s.shot_id, suffix, frame, prompt, count: stems.length });
     plans.push({ version, variant_stems: stems, prompt_as_written: s.prompt });
   }
 
