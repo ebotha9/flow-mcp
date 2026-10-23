@@ -308,10 +308,13 @@ export class LocalCore implements Core {
       const phrase = technique ? techniqueById(technique)!.phrase : "";
       // A referenced character must come out identical, not merely similar, so the scene says so explicitly. The
       // wording stays medium-neutral: the same lock has to serve a flat cartoon character and a photoreal avatar.
+      // Only assets registered as characters (flow_character) get the lock. Plain images and videos referenced by
+      // title (a start frame, a set still) must not: the lock's talk of faces, hair and clothing invites a person
+      // into an empty scene.
       const cast = (scene.reference_images ?? [])
         .filter((r) => r.startsWith("asset:"))
         .map((r) => r.slice(6).trim())
-        .filter((n) => characterLook(n) !== undefined || /^[\w .'-]{1,60}$/.test(n));
+        .filter((n) => characterLook(n) !== undefined);
       const lock = cast.length
         ? ` CHARACTER LOCK — ${cast.join(" and ")} must match the reference image exactly, as if copying it: same head shape and size, same face, same eyes, same hair, same skin, same build and proportions, same clothing items in the same colours, same hands, and the same rendering style and level of realism as the reference. Never redesign, restyle, re-proportion, re-age or re-colour them, and never swap an item for a similar one.${cast
             .map((n) => (characterLook(n) ? ` ${n} is exactly: ${characterLook(n)}.` : ""))
@@ -515,7 +518,8 @@ export class LocalCore implements Core {
     if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
     const made = await createCharacter(a);
-    if (a.describe) rememberCharacter(a.name, a.describe);
+    // Register every character, including image-only ones (empty look), so scenes that reference it get the lock.
+    rememberCharacter(a.name, a.describe ?? characterLook(a.name) ?? "");
     return { ...made, use_as: `asset:${a.name}` };
   }
 
