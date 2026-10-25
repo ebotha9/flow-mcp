@@ -116,10 +116,34 @@ const TILE_ID_JS = `(tile) => {
   return title ? "title:" + title : undefined;
 }`;
 
+// Every name a tile can be known by: its media id, a uuid in any thumbnail or <video> src, and its title. A tile's
+// primary id (TILE_ID_JS) flips between these as Flow mounts a <video> on hover or re-signs a thumbnail, so a
+// "before" snapshot holding only one of them let an OLD tile look new: on 2026-10-24 (TUK T06) a Veo batch took two
+// finished clips from earlier jobs (T06_SH03C_v03, T06_SH03O_v03), renamed them to its own stems and downloaded them,
+// while its own clips sat unrenamed in the grid. Snapshots therefore hold every alias, and a tile counts as known if
+// any of its aliases is in the snapshot.
+const TILE_KEYS_JS = `(tile) => {
+  const keys = [];
+  for (const m of tile.querySelectorAll("[data-media-id], img[src], video[src]")) {
+    const id = m.getAttribute("data-media-id");
+    if (id) keys.push(id);
+    const uuid = m.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0];
+    if (uuid) keys.push(uuid);
+  }
+  const title = tile.getAttribute("aria-label");
+  if (title) keys.push("title:" + title);
+  return keys;
+}`;
+
+// Titles this process gave tiles (renameTile). A tile already carrying one of them is an earlier job's result and is
+// never taken as new, whatever its id looks like now.
+const assignedTitles = new Set<string>();
+
+// The "before" snapshot for a generation: every alias of every tile on screen.
 export async function mediaIds(page: Page): Promise<string[]> {
   return page.evaluate(
-    (js) => [...document.querySelectorAll("flow-grid-tile-container")].map(eval(js)).filter(Boolean) as string[],
-    TILE_ID_JS,
+    (js) => [...new Set([...document.querySelectorAll("flow-grid-tile-container")].flatMap(eval(js) as (t: Element) => string[]))],
+    TILE_KEYS_JS,
   );
 }
 
@@ -235,12 +259,17 @@ type MediaKind = "image" | "video";
 //   still processing and only gets its final id a moment later, after the "before" snapshot, so it read as new;
 // - a tile of the wrong kind, such as the still that "Save frame" makes on the way to a continuation clip;
 // - a tile still rendering ("NN%").
+// - an OLD tile whose id changed since the snapshot (see TILE_KEYS_JS), or one that was scrolled out of the virtual
+//   grid when the snapshot was taken. New tiles always appear at the top, so the walk stops at the first tile the
+//   snapshot knows, and nothing below it can be ours.
 export async function freshMedia(page: Page, before: string[], kind?: MediaKind): Promise<string[]> {
   const tiles = await page.evaluate(
-    (js) => {
+    ([js, keysJs]) => {
       const idOf = eval(js) as (t: Element) => string | undefined;
+      const keysOf = eval(keysJs) as (t: Element) => string[];
       return [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
         id: idOf(t),
+        keys: keysOf(t),
         kind: t.querySelector("flow-video-tile") ? "video" : t.querySelector("flow-image-tile") ? "image" : "other",
         label: t.getAttribute("aria-label") ?? "",
         // For the first seconds after Start generation, before any "NN%" shows, a new video tile is titled with the
@@ -253,10 +282,16 @@ export async function freshMedia(page: Page, before: string[], kind?: MediaKind)
           (!!t.querySelector("flow-video-tile") && !t.querySelector('img[alt="Generated video thumbnail"], video')),
       }));
     },
-    TILE_ID_JS,
+    [TILE_ID_JS, TILE_KEYS_JS] as [string, string],
   );
-  const ours = tiles.filter((t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && (!kind || t.kind === kind));
-  return [...new Set(ours.map((t) => t.id!))];
+  const known = new Set(before);
+  const ours: string[] = [];
+  for (const t of tiles) {
+    if (t.keys.some((k) => known.has(k))) break;
+    if (!t.id || t.label.startsWith("fm-") || assignedTitles.has(t.label) || t.busy || (kind && t.kind !== kind)) continue;
+    ours.push(t.id);
+  }
+  return [...new Set(ours)];
 }
 
 async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
@@ -636,6 +671,7 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
     await page.keyboard.type(title, { delay: 8 });
     await page.keyboard.press("Enter");
     await pause(page, 1500);
+    assignedTitles.add(title);
     return true;
   } catch {
     await page.keyboard.press("Escape").catch(() => {});
@@ -857,6 +893,19 @@ export async function runGeneration(job: Job): Promise<string[]> {
   let firstError: unknown;
   // TUK shots name each output themselves (EP00_SH012_v03_F, v04_F...), the same on disk and in Flow.
   const shotStems = (s as { variant_stems?: string[] }).variant_stems;
+  // Last check before anything is renamed or downloaded: a tile that already carries a title this tool gives
+  // (a TUK stem such as T06_SH03C_v03, or <project>-<stem>) belongs to an earlier job. Taking it would rename someone
+  // else's clip and save it under this job's name, so it is refused and the job fails loudly instead.
+  const titleNow = (id: string) => (id.startsWith("title:") ? Promise.resolve(id.slice(6)) : mediaTile(page, id).getAttribute("aria-label", { timeout: 5000 }).catch(() => null));
+  const ourPrefix = `${basename(s.output_dir)}-`;
+  for (const id of fresh) {
+    const title = (await titleNow(id)) ?? "";
+    if (assignedTitles.has(title) || /_v\d{2}(_[A-Za-z]+)?$/.test(title) || title.startsWith(ourPrefix)) {
+      throw new Error(
+        `The newest finished tile is "${title}", which is an earlier job's result, not this one's. Nothing was renamed or downloaded. Check the Flow grid: this job's clip may still be rendering or may have failed. Fetch it with flow_download once it shows.`,
+      );
+    }
+  }
   for (const [i, id] of fresh.entries()) {
     const label = shotStems?.[i] ?? (fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem);
     // Flow names clips itself and reuses those names, so two takes of one scene come back identically titled and
